@@ -7,7 +7,7 @@ export const APP_VERSION = await getVersion();
 
 export type SavedPanel = "simple" | "advanced";
 export type ExplanationMode = "off" | "text";
-export type Theme = "black" | "white";
+export type Theme = "dark" | "light";
 
 export interface Settings {
   version: string;
@@ -99,7 +99,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lastPanel: "simple",
   showStopReason: true,
   showStopOverlay: true,
-  theme: "black",
+  theme: "dark",
 };
 
 function sanitizeSavedPanel(value: unknown): SavedPanel {
@@ -232,7 +232,7 @@ function sanitizeSettings(input?: Partial<Settings> | null): Settings {
     disableScreenshots: false,
     explanationMode: sanitizeExplanationMode(saved),
     lastPanel: sanitizeSavedPanel(saved.lastPanel),
-    theme: saved.theme === "white" ? "white" : "black",
+    theme: saved.theme === "light" ? "light" : "dark",
   };
 }
 
