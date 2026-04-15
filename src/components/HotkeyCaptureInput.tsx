@@ -92,7 +92,18 @@ export default function HotkeyCaptureInput({
       return;
     }
 
-    acceptHotkey(captureHotkey(event), event.currentTarget);
+    acceptHotkey(
+      captureHotkey({
+        key: event.key,
+        code: event.code,
+        location: event.location,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        metaKey: event.metaKey,
+      }),
+      event.currentTarget,
+    );
   };
 
   const handleMouseDown = (event: React.MouseEvent<HTMLInputElement>) => {

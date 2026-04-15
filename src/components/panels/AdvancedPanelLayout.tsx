@@ -1,6 +1,7 @@
 import "./Modes.css";
 import {
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type ChangeEvent,
@@ -176,6 +177,9 @@ export default function AdvancedPanelLayout({
   const rowSpacing = compact ? 6 : 8;
   const cardBodyClass = `adv-card-body ${compact ? "adv-card-body-compact" : ""}`;
   const featureBodyClass = `adv-feature-body ${compact ? "adv-feature-body-compact" : ""}`;
+  const clampDoubleClickDelay = useEffectEvent((maxDelay: number) => {
+    update({ doubleClickDelay: maxDelay });
+  });
 
   useEffect(() => {
     const max = maxDoubleClickDelayMs(
@@ -183,9 +187,13 @@ export default function AdvancedPanelLayout({
       settings.clickInterval,
     );
     if (settings.doubleClickDelay > max) {
-      update({ doubleClickDelay: max });
+      clampDoubleClickDelay(max);
     }
-  }, [settings.clickSpeed, settings.clickInterval]);
+  }, [
+    settings.clickInterval,
+    settings.clickSpeed,
+    settings.doubleClickDelay,
+  ]);
 
   const showDesc = (text: string) =>
     showExplanations ? <p className="adv-desc">{text}</p> : null;

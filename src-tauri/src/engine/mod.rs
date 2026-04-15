@@ -16,6 +16,7 @@ pub struct ClickerConfig {
     pub button: i32,
     pub double_click_enabled: bool,
     pub double_click_delay_ms: u32,
+    pub position_enabled: bool,
     pub pos_x: i32,
     pub pos_y: i32,
     pub offset: f64,

@@ -1,28 +1,31 @@
-use crate::AppHandle;
-use crate::ClickerState;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
-use tauri::Manager;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetMessageW, SetWindowsHookExW, MSG, WH_MOUSE_LL, WM_MOUSEWHEEL,
-};
-
-/// Pseudo virtual-key codes for scroll wheel (not real Windows VK codes).
-pub const VK_SCROLL_UP_PSEUDO: i32 = -1;
-pub const VK_SCROLL_DOWN_PSEUDO: i32 = -2;
-
-/// Epoch-ms timestamps of the last detected scroll events (set by the mouse hook).
-static SCROLL_UP_AT: AtomicU64 = AtomicU64::new(0);
-static SCROLL_DOWN_AT: AtomicU64 = AtomicU64::new(0);
-
-/// How long (ms) a scroll event is considered "pressed" for the polling loop.
-const SCROLL_WINDOW_MS: u64 = 200;
-
 use crate::engine::worker::now_epoch_ms;
 use crate::engine::worker::start_clicker_inner;
 use crate::engine::worker::stop_clicker_inner;
 use crate::engine::worker::toggle_clicker_inner;
+use crate::AppHandle;
+use crate::ClickerState;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
+use tauri::Manager;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    CallNextHookEx, GetMessageW, KBDLLHOOKSTRUCT, SetWindowsHookExW, MSG, LLKHF_EXTENDED,
+    WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_MOUSEWHEEL, WM_SYSKEYDOWN,
+    WM_SYSKEYUP,
+};
+
+/// Pseudo virtual-key codes for inputs that do not have a stable VK we can poll.
+pub const VK_SCROLL_UP_PSEUDO: i32 = -1;
+pub const VK_SCROLL_DOWN_PSEUDO: i32 = -2;
+pub const VK_NUMPAD_ENTER_PSEUDO: i32 = -3;
+
+/// Epoch-ms timestamps of the last detected scroll events.
+static SCROLL_UP_AT: AtomicU64 = AtomicU64::new(0);
+static SCROLL_DOWN_AT: AtomicU64 = AtomicU64::new(0);
+static NUMPAD_ENTER_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// How long a scroll event is considered "pressed" for the polling loop.
+const SCROLL_WINDOW_MS: u64 = 200;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HotkeyBinding {
@@ -102,24 +105,46 @@ pub fn parse_hotkey_binding(hotkey: &str) -> Result<HotkeyBinding, String> {
     })
 }
 
-pub fn parse_hotkey_main_key(token: &str, original_hotkey: &str) -> Result<(i32, String), String> {
+pub fn parse_hotkey_main_key(
+    token: &str,
+    original_hotkey: &str,
+) -> Result<(i32, String), String> {
     let lower = token.trim().to_lowercase();
 
     let mapped = match lower.as_str() {
-        // ── Mouse buttons ──────────────────────────────────────────
+        // Mouse buttons
         "mouseleft" | "mouse1" => Some((VK_LBUTTON as i32, String::from("mouseleft"))),
         "mouseright" | "mouse2" => Some((VK_RBUTTON as i32, String::from("mouseright"))),
         "mousemiddle" | "mouse3" | "scrollbutton" | "middleclick" => {
             Some((VK_MBUTTON as i32, String::from("mousemiddle")))
         }
-        "mouse4" | "mouseback" | "xbutton1" => Some((VK_XBUTTON1 as i32, String::from("mouse4"))),
+        "mouse4" | "mouseback" | "xbutton1" => {
+            Some((VK_XBUTTON1 as i32, String::from("mouse4")))
+        }
         "mouse5" | "mouseforward" | "xbutton2" => {
             Some((VK_XBUTTON2 as i32, String::from("mouse5")))
         }
-        // ── Scroll wheel (pseudo-VKs) ──────────────────────────────
+        // Scroll wheel
         "scrollup" | "wheelup" => Some((VK_SCROLL_UP_PSEUDO, String::from("scrollup"))),
         "scrolldown" | "wheeldown" => Some((VK_SCROLL_DOWN_PSEUDO, String::from("scrolldown"))),
-        // ── Keyboard keys (original) ───────────────────────────────
+        // Explicit numpad keys
+        "numpad0" => Some((VK_NUMPAD0 as i32, String::from("numpad0"))),
+        "numpad1" => Some((VK_NUMPAD1 as i32, String::from("numpad1"))),
+        "numpad2" => Some((VK_NUMPAD2 as i32, String::from("numpad2"))),
+        "numpad3" => Some((VK_NUMPAD3 as i32, String::from("numpad3"))),
+        "numpad4" => Some((VK_NUMPAD4 as i32, String::from("numpad4"))),
+        "numpad5" => Some((VK_NUMPAD5 as i32, String::from("numpad5"))),
+        "numpad6" => Some((VK_NUMPAD6 as i32, String::from("numpad6"))),
+        "numpad7" => Some((VK_NUMPAD7 as i32, String::from("numpad7"))),
+        "numpad8" => Some((VK_NUMPAD8 as i32, String::from("numpad8"))),
+        "numpad9" => Some((VK_NUMPAD9 as i32, String::from("numpad9"))),
+        "numpadadd" => Some((VK_ADD as i32, String::from("numpadadd"))),
+        "numpadsubtract" => Some((VK_SUBTRACT as i32, String::from("numpadsubtract"))),
+        "numpadmultiply" => Some((VK_MULTIPLY as i32, String::from("numpadmultiply"))),
+        "numpaddivide" => Some((VK_DIVIDE as i32, String::from("numpaddivide"))),
+        "numpaddecimal" => Some((VK_DECIMAL as i32, String::from("numpaddecimal"))),
+        "numpadenter" => Some((VK_NUMPAD_ENTER_PSEUDO, String::from("numpadenter"))),
+        // Keyboard keys
         "<" | ">" | "intlbackslash" | "oem102" | "nonusbackslash" => {
             Some((VK_OEM_102 as i32, String::from("IntlBackslash")))
         }
@@ -222,8 +247,7 @@ pub fn start_hotkey_listener(app: AppHandle) {
         loop {
             let binding = {
                 let state = app.state::<ClickerState>();
-                let binding = state.registered_hotkey.lock().unwrap().clone();
-                binding
+                state.registered_hotkey.lock().unwrap().clone()
             };
 
             let currently_pressed = binding
@@ -286,8 +310,7 @@ pub fn start_hotkey_listener(app: AppHandle) {
 pub fn handle_hotkey_pressed(app: &AppHandle) {
     let mode = {
         let state = app.state::<ClickerState>();
-        let mode = state.settings.lock().unwrap().mode.clone();
-        mode
+        state.settings.lock().unwrap().mode.clone()
     };
 
     if mode == "Toggle" {
@@ -300,8 +323,7 @@ pub fn handle_hotkey_pressed(app: &AppHandle) {
 pub fn handle_hotkey_released(app: &AppHandle) {
     let mode = {
         let state = app.state::<ClickerState>();
-        let mode = state.settings.lock().unwrap().mode.clone();
-        mode
+        state.settings.lock().unwrap().mode.clone()
     };
 
     if mode == "Hold" {
@@ -326,9 +348,7 @@ pub fn is_hotkey_binding_pressed(binding: &HotkeyBinding) -> bool {
     is_main_key_active(binding.main_vk)
 }
 
-/// Check if the main key is currently active.  For normal VKs this uses
-/// `GetAsyncKeyState`; for scroll pseudo-VKs it checks the timestamp
-/// set by the low-level mouse hook.
+/// For normal VKs this uses `GetAsyncKeyState`. Pseudo-VKs use hook-maintained state.
 fn is_main_key_active(vk: i32) -> bool {
     match vk {
         VK_SCROLL_UP_PSEUDO => {
@@ -347,6 +367,7 @@ fn is_main_key_active(vk: i32) -> bool {
             let now = now_epoch_ms();
             now.saturating_sub(ts) < SCROLL_WINDOW_MS
         }
+        VK_NUMPAD_ENTER_PSEUDO => NUMPAD_ENTER_DOWN.load(Ordering::SeqCst),
         _ => is_vk_down(vk),
     }
 }
@@ -355,33 +376,59 @@ pub fn is_vk_down(vk: i32) -> bool {
     unsafe { (GetAsyncKeyState(vk) as u16 & 0x8000) != 0 }
 }
 
-// ─── Low-level mouse hook for scroll wheel detection ────────────────────────
-
-/// Must be called once at startup (from `lib.rs` setup).  Spawns a thread that
-/// installs a `WH_MOUSE_LL` hook and pumps messages so the hook callback fires.
+/// Installs low-level hooks used for scroll and numpad-enter hotkeys.
 pub fn start_scroll_hook() {
     std::thread::spawn(|| {
         unsafe {
-            let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), 0, 0);
-            if hook == 0 {
+            let mouse_hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), 0, 0);
+            if mouse_hook == 0 {
                 log::error!("[Hotkeys] Failed to install WH_MOUSE_LL hook");
+            }
+
+            let keyboard_hook =
+                SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), 0, 0);
+            if keyboard_hook == 0 {
+                log::error!("[Hotkeys] Failed to install WH_KEYBOARD_LL hook");
+            }
+
+            if mouse_hook == 0 && keyboard_hook == 0 {
                 return;
             }
 
-            // Pump messages forever – required for the hook callback to fire.
             let mut msg: MSG = std::mem::zeroed();
             while GetMessageW(&mut msg, 0, 0, 0) > 0 {}
         }
     });
 }
 
-/// Raw low-level mouse-hook callback.  We only care about `WM_MOUSEWHEEL`.
+unsafe extern "system" fn keyboard_hook_proc(
+    code: i32,
+    w_param: usize,
+    l_param: isize,
+) -> isize {
+    if code >= 0 {
+        let info = &*(l_param as *const KBDLLHOOKSTRUCT);
+        if info.vkCode as i32 == VK_RETURN as i32 && (info.flags & LLKHF_EXTENDED) != 0 {
+            match w_param as u32 {
+                WM_KEYDOWN | WM_SYSKEYDOWN => {
+                    NUMPAD_ENTER_DOWN.store(true, Ordering::SeqCst);
+                }
+                WM_KEYUP | WM_SYSKEYUP => {
+                    NUMPAD_ENTER_DOWN.store(false, Ordering::SeqCst);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    CallNextHookEx(0, code, w_param, l_param)
+}
+
+/// Raw low-level mouse-hook callback. We only care about `WM_MOUSEWHEEL`.
 unsafe extern "system" fn mouse_hook_proc(code: i32, w_param: usize, l_param: isize) -> isize {
     if code >= 0 && w_param == WM_MOUSEWHEEL as usize {
-        // lParam -> pointer to MSLLHOOKSTRUCT; mouseData high word = wheel delta
-        #[allow(clippy::upper_case_acronyms)]
         #[repr(C)]
-        struct MSLLHOOKSTRUCT {
+        struct MsllHookStruct {
             pt_x: i32,
             pt_y: i32,
             mouse_data: u32,
@@ -389,8 +436,9 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, w_param: usize, l_param: is
             time: u32,
             extra_info: usize,
         }
-        let info = &*(l_param as *const MSLLHOOKSTRUCT);
-        let delta = (info.mouse_data >> 16) as i16; // high word, signed
+
+        let info = &*(l_param as *const MsllHookStruct);
+        let delta = (info.mouse_data >> 16) as i16;
         let now = now_epoch_ms();
         if delta > 0 {
             SCROLL_UP_AT.store(now, Ordering::SeqCst);
@@ -398,5 +446,44 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, w_param: usize, l_param: is
             SCROLL_DOWN_AT.store(now, Ordering::SeqCst);
         }
     }
+
     CallNextHookEx(0, code, w_param, l_param)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_hotkey_binding, parse_hotkey_binding};
+
+    #[test]
+    fn numpad_tokens_round_trip() {
+        for token in [
+            "numpad0",
+            "numpad1",
+            "numpad2",
+            "numpad3",
+            "numpad4",
+            "numpad5",
+            "numpad6",
+            "numpad7",
+            "numpad8",
+            "numpad9",
+            "numpadadd",
+            "numpadsubtract",
+            "numpadmultiply",
+            "numpaddivide",
+            "numpaddecimal",
+            "numpadenter",
+        ] {
+            let hotkey = format!("ctrl+shift+{token}");
+            let binding = parse_hotkey_binding(&hotkey).expect("token should parse");
+            assert_eq!(binding.key_token, token);
+            assert_eq!(format_hotkey_binding(&binding), hotkey);
+        }
+    }
+
+    #[test]
+    fn empty_hotkeys_are_rejected() {
+        assert!(parse_hotkey_binding("").is_err());
+        assert!(parse_hotkey_binding("ctrl+").is_err());
+    }
 }

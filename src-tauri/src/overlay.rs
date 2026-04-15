@@ -1,4 +1,5 @@
 use crate::app_state::ClickerState;
+use crate::engine::mouse::{current_virtual_screen_rect, VirtualScreenRect};
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -27,11 +28,13 @@ pub fn init_overlay(app: &AppHandle) -> Result<(), String> {
     window
         .set_ignore_cursor_events(true)
         .map_err(|e| e.to_string())?;
-    let _ = window.set_fullscreen(true);
     let _ = window.set_decorations(false);
 
     #[cfg(target_os = "windows")]
-    apply_win32_styles(&window)?;
+    {
+        apply_win32_styles(&window)?;
+        let _ = sync_overlay_bounds(&window)?;
+    }
 
     log::info!("[Overlay] Init complete — window configured but hidden");
     Ok(())
@@ -52,9 +55,12 @@ pub fn show_overlay(app: &AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("overlay")
         .ok_or_else(|| "Overlay window not found".to_string())?;
+    let bounds = current_virtual_screen_rect()
+        .ok_or_else(|| "Virtual screen bounds not available".to_string())?;
 
     #[cfg(target_os = "windows")]
     {
+        sync_overlay_bounds(&window)?;
         let visible = window.is_visible().unwrap_or(false);
         if !visible {
             let hwnd = get_hwnd(&window)?;
@@ -63,16 +69,6 @@ pub fn show_overlay(app: &AppHandle) -> Result<(), String> {
     }
 
     *LAST_ZONE_SHOW.lock().unwrap() = Some(Instant::now());
-
-    // Get screen dimensions
-    let monitor = app
-        .primary_monitor()
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "No primary monitor found".to_string())?;
-
-    let scale = monitor.scale_factor(); // Adjust for display scaling
-    let sw = (monitor.size().width as f64 / scale) as u32;
-    let sh = (monitor.size().height as f64 / scale) as u32;
 
     let settings = state.settings.lock().unwrap();
     let _ = window.emit(
@@ -88,8 +84,8 @@ pub fn show_overlay(app: &AppHandle) -> Result<(), String> {
             "cornerStopTR": settings.corner_stop_tr,
             "cornerStopBL": settings.corner_stop_bl,
             "cornerStopBR": settings.corner_stop_br,
-            "screenWidth": sw,
-            "screenHeight": sh,
+            "screenWidth": bounds.width,
+            "screenHeight": bounds.height,
             "_showDisabledEdges": !settings.edge_stop_enabled,
             "_showDisabledCorners": !settings.corner_stop_enabled,
         }),
@@ -180,4 +176,25 @@ fn apply_win32_styles(window: &tauri::WebviewWindow) -> Result<(), String> {
 
     log::info!("[Overlay] Win32 styles applied");
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn sync_overlay_bounds(window: &tauri::WebviewWindow) -> Result<VirtualScreenRect, String> {
+    let bounds = current_virtual_screen_rect()
+        .ok_or_else(|| "Virtual screen bounds not available".to_string())?;
+    let hwnd = get_hwnd(window)?;
+
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            0,
+            bounds.left,
+            bounds.top,
+            bounds.width,
+            bounds.height,
+            SWP_FRAMECHANGED | SWP_NOZORDER,
+        );
+    }
+
+    Ok(bounds)
 }
