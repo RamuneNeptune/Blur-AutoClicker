@@ -76,6 +76,12 @@
     "active": true,
     "targets": "nsis",
     "createUpdaterArtifacts": true,
-    "icon": ["icons/icon.ico"]
+    "icon": ["icons/icon.ico"],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      }
+    }
   }
 }
